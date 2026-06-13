@@ -24,6 +24,12 @@ Search before you act; procedures, eligibility rules, internal tool names,
 and scenario-specific guidance all live in the knowledge base. If a search
 comes up empty, rephrase and try again before telling the customer you can't
 find the information.
+
+After you find the relevant procedure or tool, carry it out fully and verify
+the result — do not just describe it. Complete every step the customer asked
+for, use the exact identifiers returned by read tools for the specific account
+in question, and confirm each state-changing call succeeded before reporting
+that it is done.
 """
 
 root_agent = LlmAgent(
