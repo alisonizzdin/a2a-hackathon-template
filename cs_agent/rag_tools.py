@@ -191,7 +191,7 @@ def kb_search_vector(query: str, top_k: int = 3) -> list[dict]:
         ]
 
 
-def kb_search_hybrid(query: str, keywords: str = "", top_k: int = 4) -> list[dict]:
+def kb_search_hybrid(query: str, keywords: str = "", top_k: int = 3) -> list[dict]:
     """BM25-first hybrid KB search with query-focused snippets.
 
     Args:

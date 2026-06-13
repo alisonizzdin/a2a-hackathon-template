@@ -3,6 +3,7 @@
 import os
 
 from google.adk.agents import LlmAgent
+from google.genai import types
 
 from cs_client_tool import ask_customer_service
 from env_toolset import EnvApiToolset
@@ -52,6 +53,8 @@ When reading a customer-service reply:
 - If the action belongs to the user side and you have a matching tool, perform
    it after all required fields are known.
 - If required fields are missing, ask one concise clarifying question.
+- Do not relay the full customer-service response. Use only the decision, next
+  action, required fields, and the shortest safe user summary.
 
 User-side discoverable tools:
 - If customer service gives a discoverable user tool, explain that the user
@@ -68,6 +71,17 @@ Recommendation style:
 - If the user asks for one best option or says they do not want to compare
   options, give one recommendation only, plus the decisive reason and any
   required caveat. Do not list alternatives.
+- If the user asks "which should I get/apply for" and gives enough constraints,
+  recommend one product and ask only for fields required to take action.
+- If constraints are missing, ask at most one clarifying question containing no
+  more than two fields. Do not present broad comparison forms.
+- Do not list multiple products unless the user explicitly asks for options,
+  comparison, or all available products.
+
+Response style:
+- Keep normal user replies to 1-3 short sentences or up to 3 bullets.
+- For completed actions, say "Done" plus the tool result detail that matters.
+- For blocked actions, state the one missing field/action and stop.
 
 Tool arguments must be real values from the user, customer service, or tool
 results. Never use placeholders. If a required value is unknown, ask for it.
@@ -80,5 +94,9 @@ root_agent = LlmAgent(
     name="personal_agent",
     model=chat_model(),
     instruction=INSTRUCTION,
+    generate_content_config=types.GenerateContentConfig(
+        max_output_tokens=512,
+        temperature=0.2,
+    ),
     tools=[EnvApiToolset(), ask_customer_service],
 )

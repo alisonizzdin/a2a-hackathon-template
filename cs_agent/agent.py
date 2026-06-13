@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from google.adk.agents import LlmAgent
+from google.genai import types
 
 from env_toolset import EnvApiToolset
 from model_client import chat_model
@@ -27,7 +28,7 @@ search the knowledge base. Use small targeted queries and top_k=3 unless the
 caller explicitly needs a broader list.
 
 Available search tools:
-- kb_search_hybrid(query, keywords="", top_k=4): use this first for policy and
+- kb_search_hybrid(query, keywords="", top_k=3): use this first for policy and
   procedure questions. Put exact product/action/tool names in keywords.
 - kb_search_bm25(query, top_k=3): exact product names, tool names, fees,
   limits, eligibility terms, and policy words.
@@ -80,8 +81,24 @@ POLICY_BASIS: <one brief rule or retrieved basis>
 NEXT_STEP_FOR_PERSONAL: <one clear instruction>
 USER_SAFE_SUMMARY: <short message safe to relay to the user>
 
-For recommendations, give the best option plus necessary caveats. Do not list a
-full product catalog unless the caller asks for all options.
+Field length limits:
+- POLICY_BASIS: one sentence.
+- NEXT_STEP_FOR_PERSONAL: one sentence.
+- USER_SAFE_SUMMARY: one sentence, no markdown table.
+- REQUIRED_FIELDS: names only, no explanation.
+
+For recommendations:
+- If the caller asks for the best option, return one product only, plus the
+  decisive reason and any required caveat.
+- If more information is required, return NEED_MORE_INFO with at most two
+  required fields and do not list product alternatives.
+- Do not list a full product catalog unless the caller asks for all options.
+
+For user discoverable tools:
+- After successfully giving the tool, set ACTION_OWNER: user and put the exact
+  user tool name plus required arguments in NEXT_STEP_FOR_PERSONAL.
+- If the personal agent says the user already ran the tool successfully, accept
+  that report unless policy explicitly requires bank confirmation.
 
 Be concise and operational. Avoid policy essays and intermediate status
 updates. Never invent policy, account facts, eligibility, balances, fees,
@@ -92,5 +109,9 @@ root_agent = LlmAgent(
     name="cs_agent",
     model=chat_model(),
     instruction=POLICY_PATH.read_text() + RAG_GUIDANCE,
+    generate_content_config=types.GenerateContentConfig(
+        max_output_tokens=512,
+        temperature=0.2,
+    ),
     tools=[EnvApiToolset(), kb_search_hybrid, kb_search_bm25, kb_search_vector],
 )

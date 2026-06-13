@@ -1,4 +1,5 @@
 .env
+.DS_Store
 __pycache__/
 
 # Generated embedding cache (regenerate with cs_agent/precompute_embeddings.py)
