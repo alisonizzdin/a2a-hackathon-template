@@ -63,3 +63,8 @@ async def ask_customer_service(message: str, tool_context: ToolContext) -> str:
             elif isinstance(event, tuple) and isinstance(event[0], Task):
                 reply = _text_of_task(event[0]) or reply
     return reply or "[no response from customer service]"
+
+
+async def call_customer_service(message: str, tool_context: ToolContext) -> str:
+    """Alias for model/tool-call stability; sends the message to CS."""
+    return await ask_customer_service(message, tool_context)

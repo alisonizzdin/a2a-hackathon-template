@@ -88,6 +88,8 @@ class EnvApiToolset(BaseToolset):
             resp = await client.get(
                 f"{ENV_API_URL}/sessions/{sid}/tools", headers=_HEADERS
             )
+        if resp.status_code in {404, 409}:
+            return fallback
         resp.raise_for_status()
         return [EnvApiTool(schema) for schema in resp.json()["tools"]] + fallback
 

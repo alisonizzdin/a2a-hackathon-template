@@ -10,14 +10,21 @@ the Redis 8 map-style reply work regardless of redis-py version."""
 import os
 import re
 import struct
+from pathlib import Path
+from collections import defaultdict
 
 import redis
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+KB_EMBEDDINGS_PATH = Path(os.environ.get("KB_EMBEDDINGS_PATH", "/app/kb/embeddings.json"))
 KB_INDEX = "kb_idx"
 DOC_PREFIX = "doc:"
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIM = 768
+LIVE_EMBEDDINGS = os.environ.get("KB_LIVE_EMBEDDINGS", "false").lower() == "true"
+MAX_CONTENT_CHARS = 1600
+TRUNCATION_MARKER = "\n[...truncated for latency...]"
+SNIPPET_WINDOW_CHARS = 700
 
 _client = redis.Redis.from_url(REDIS_URL, decode_responses=False)
 _genai_client = None
@@ -77,7 +84,45 @@ def _strip_score(docs: list[dict]) -> list[dict]:
     return docs
 
 
-def kb_search_bm25(query: str, top_k: int = 5) -> list[dict]:
+def _query_terms(*values: str) -> list[str]:
+    terms: list[str] = []
+    seen = set()
+    for value in values:
+        for term in re.findall(r"\w+", (value or "").lower()):
+            if len(term) < 3 or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+    return terms
+
+
+def _focused_content(content: str, terms: list[str]) -> str:
+    if len(content) <= MAX_CONTENT_CHARS:
+        return content
+    lower = content.lower()
+    positions = [lower.find(term) for term in terms if lower.find(term) >= 0]
+    if not positions:
+        keep = MAX_CONTENT_CHARS - len(TRUNCATION_MARKER)
+        return content[:keep].rstrip() + TRUNCATION_MARKER
+
+    start = max(0, min(positions) - SNIPPET_WINDOW_CHARS)
+    end = min(len(content), start + MAX_CONTENT_CHARS - len(TRUNCATION_MARKER))
+    snippet = content[start:end].strip()
+    prefix = TRUNCATION_MARKER if start > 0 else ""
+    suffix = TRUNCATION_MARKER if end < len(content) else ""
+    return prefix + snippet + suffix
+
+
+def _clip_content(docs: list[dict], *queries: str) -> list[dict]:
+    terms = _query_terms(*queries)
+    for doc in docs:
+        content = doc.get("content")
+        if isinstance(content, str):
+            doc["content"] = _focused_content(content, terms)
+    return docs
+
+
+def kb_search_bm25(query: str, top_k: int = 3) -> list[dict]:
     """Full-text (BM25) search over the Rho-Bank knowledge base.
 
     Args:
@@ -86,7 +131,7 @@ def kb_search_bm25(query: str, top_k: int = 5) -> list[dict]:
         top_k: Number of documents to return.
 
     Returns:
-        Matching documents with doc_id, title, and full content.
+        Matching documents with doc_id, title, and clipped content.
     """
     terms = re.findall(r"\w+", query.lower())
     if not terms:
@@ -98,10 +143,10 @@ def kb_search_bm25(query: str, top_k: int = 5) -> list[dict]:
         "LIMIT", "0", str(top_k),
         "RETURN", "2", "title", "content",
     )
-    return _parse_search_reply(reply)
+    return _clip_content(_parse_search_reply(reply), query)
 
 
-def kb_search_vector(query: str, top_k: int = 5) -> list[dict]:
+def kb_search_vector(query: str, top_k: int = 3) -> list[dict]:
     """Semantic (vector) search over the Rho-Bank knowledge base.
 
     Better than kb_search_bm25 when the query is a natural-language question
@@ -112,9 +157,20 @@ def kb_search_vector(query: str, top_k: int = 5) -> list[dict]:
         top_k: Number of documents to return.
 
     Returns:
-        Matching documents with doc_id, title, and full content; or an error
+        Matching documents with doc_id, title, and clipped content; or an error
         entry telling you to fall back to kb_search_bm25.
     """
+    if not LIVE_EMBEDDINGS and not KB_EMBEDDINGS_PATH.exists():
+        docs = kb_search_bm25(query, top_k)
+        if docs:
+            return docs
+        return [
+            {
+                "error": "Vector search unavailable because the index has no "
+                "embeddings. Use kb_search_bm25 with keywords instead."
+            }
+        ]
+
     try:
         vector = struct.pack(f"{EMBEDDING_DIM}f", *_embed([query])[0])
         reply = _client.execute_command(
@@ -125,7 +181,7 @@ def kb_search_vector(query: str, top_k: int = 5) -> list[dict]:
             "RETURN", "3", "title", "content", "score",
             "DIALECT", "2",
         )
-        return _strip_score(_parse_search_reply(reply))
+        return _clip_content(_strip_score(_parse_search_reply(reply)), query)
     except Exception as e:
         return [
             {
@@ -133,3 +189,50 @@ def kb_search_vector(query: str, top_k: int = 5) -> list[dict]:
                 "Use kb_search_bm25 with keywords instead."
             }
         ]
+
+
+def kb_search_hybrid(query: str, keywords: str = "", top_k: int = 3) -> list[dict]:
+    """BM25-first hybrid KB search with query-focused snippets.
+
+    Args:
+        query: Natural-language policy or procedure question.
+        keywords: Optional exact product, action, tool, fee, or limit terms.
+        top_k: Maximum merged documents to return.
+
+    Returns:
+        Deduplicated documents with doc_id, title, clipped content, and
+        retrieval_source. Falls back to BM25 only when vectors are unavailable.
+    """
+    bm25_query = keywords.strip() or query
+    merged: dict[str, dict] = {}
+    ranks: dict[str, dict[str, int]] = defaultdict(dict)
+
+    for rank, doc in enumerate(kb_search_bm25(bm25_query, top_k=top_k)):
+        doc_id = doc.get("doc_id", f"bm25_{rank}")
+        merged[doc_id] = {**doc, "retrieval_source": "bm25"}
+        ranks[doc_id]["bm25_rank"] = rank
+
+    if LIVE_EMBEDDINGS or KB_EMBEDDINGS_PATH.exists():
+        vector_docs = kb_search_vector(query, top_k=top_k)
+        if not (vector_docs and "error" in vector_docs[0]):
+            for rank, doc in enumerate(vector_docs):
+                doc_id = doc.get("doc_id", f"vector_{rank}")
+                if doc_id in merged:
+                    merged[doc_id]["retrieval_source"] = "bm25+vector"
+                else:
+                    merged[doc_id] = {**doc, "retrieval_source": "vector"}
+                ranks[doc_id]["vector_rank"] = rank
+
+    docs = []
+    for doc_id, doc in merged.items():
+        doc.update(ranks.get(doc_id, {}))
+        docs.append(doc)
+
+    docs.sort(
+        key=lambda d: (
+            0 if d.get("retrieval_source") == "bm25+vector" else 1,
+            d.get("bm25_rank", 999),
+            d.get("vector_rank", 999),
+        )
+    )
+    return _clip_content(docs[:top_k], query, keywords)
