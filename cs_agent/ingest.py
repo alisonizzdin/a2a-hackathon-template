@@ -23,6 +23,7 @@ KB_DOCUMENTS_DIR = Path(os.environ.get("KB_DOCUMENTS_DIR", "/app/kb/documents"))
 KB_EMBEDDINGS_PATH = Path(os.environ.get("KB_EMBEDDINGS_PATH", "/app/kb/embeddings.json"))
 
 EMBED_BATCH_SIZE = 25
+LIVE_EMBEDDINGS = os.environ.get("KB_LIVE_EMBEDDINGS", "false").lower() == "true"
 
 
 def load_embedding_cache() -> dict[str, bytes]:
@@ -78,7 +79,13 @@ def build_index() -> None:
             f"{len(documents)} documents",
             file=sys.stderr,
         )
-    if misses:
+    if misses and not LIVE_EMBEDDINGS:
+        print(
+            f"[ingest] no embedding cache for {len(misses)} document(s); "
+            "skipping live embeddings for fast startup (BM25 search remains available)",
+            file=sys.stderr,
+        )
+    elif misses:
         try:
             for start in range(0, len(misses), EMBED_BATCH_SIZE):
                 idx = misses[start : start + EMBED_BATCH_SIZE]
