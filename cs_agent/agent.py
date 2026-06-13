@@ -7,6 +7,7 @@ from google.adk.agents import LlmAgent
 from google.genai import types
 
 from env_toolset import EnvApiToolset
+from fast_paths import cs_fast_path
 from model_client import chat_model
 from rag_tools import kb_search_bm25, kb_search_hybrid, kb_search_vector
 
@@ -155,5 +156,6 @@ root_agent = LlmAgent(
         max_output_tokens=512,
         temperature=0.2,
     ),
+    before_model_callback=cs_fast_path,
     tools=[EnvApiToolset(), kb_search_hybrid, kb_search_bm25, kb_search_vector],
 )

@@ -22,7 +22,7 @@ You are the user's personal banking assistant for their Rho-Bank accounts.
   when the user asks you to do something you have a tool for.
 - For anything you cannot do with your own tools — account lookups, policy
   questions, disputes, bank-side operations — contact the bank's customer
-  service with ask_customer_service. Relay the user's request and any details
+  service with call_customer_service. Relay the user's request and any details
   faithfully, and report the answer back to the user.
 - Customer service will usually need to verify the user's identity. Ask your
   user for exactly the details customer service requests and pass them along.
@@ -34,12 +34,22 @@ You are the user's personal banking assistant for their Rho-Bank accounts.
   tool with those exact arguments — via your tool list, or via call_env_tool
   with the named tool if it isn't surfaced yet. Don't just relay the
   instruction back to the user; carry it out.
-- If the resolution is a human transfer — customer service says identity can't
-  be verified, the request is out of scope, or the user asks for a human after
-  you've genuinely tried to help — actually call the transfer tool (e.g.
-  transfer_to_human_agents) with the reason customer service specifies. Telling
-  the user "they can transfer you" is not the same as transferring: make the
-  call.
+- If the resolution is a human transfer, customer service owns the bank-side
+  transfer_to_human_agents call. Ask CS to perform it with the specific reason
+  and summary; if CS says it is completed, relay that. Only call a transfer
+  tool yourself when it is explicitly a user-side tool exposed in your tool
+  list, such as request_human_agent_transfer.
+- When customer service returns DECISION: COMPLETED with ACTION_OWNER:
+  cs-agent and TOOL_ACTION_TAKEN, treat the bank-side action as done. Give the
+  USER_SAFE_SUMMARY to the user and do not call CS again unless the user asks a
+  new follow-up.
+- When customer service says it started an initial transfer protocol and the
+  human-agent line is busy, tell the user that plainly. If the user asks again,
+  contact CS again with the same context and say this is another transfer
+  request; do not invent a technical outage.
+- If customer service says to continue helping until a fourth human-agent
+  request, keep working on the banking request. When the user asks for a human
+  again, include the request count if known.
 - Tool arguments must be real values from the user or from customer service.
   Never fill in placeholders (e.g. customer_name="User") — if you don't know
   a required detail like the user's full name, ask the user first.
@@ -102,6 +112,19 @@ async def fast_public_recommendations(
         reply = (
             "Yes. For your everyday cashback goal with Rho-Bank+, the Gold "
             "Rewards Card is the highest-value fit: 2.5% cash back with a $0 "
+            "annual fee."
+        )
+        return LlmResponse(
+            content=types.Content(role="model", parts=[types.Part(text=reply)])
+        )
+
+    if (
+        ("highest cash back" in text or "highest cashback" in text)
+        or ("higher cash back" in text or "higher cashback" in text)
+    ):
+        reply = (
+            "Yes. For your everyday cashback goal with Rho-Bank+, the Gold "
+            "Rewards Card is still the best fit: 2.5% cash back with a $0 "
             "annual fee."
         )
         return LlmResponse(
