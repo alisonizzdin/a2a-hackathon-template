@@ -41,10 +41,12 @@ async def _post_tool_call(sid: str, name: str, arguments: dict) -> dict:
 async def call_env_tool(
     tool_name: str, arguments_json: str, tool_context: ToolContext
 ) -> dict:
-    """Call any environment tool by name.
+    """Call a user-side environment tool by name.
 
-    Use this for tools that are not in your tool list yet (for example a tool
-    you were just granted). `arguments_json` is a JSON object string, e.g.
+    Use this only for user-side tools that are not in your tool list yet (for
+    example a tool you were just granted). Do not use it for bank-side lookup,
+    verification, profile changes, tool unlocking, or human transfer; ask
+    customer service for those. `arguments_json` is a JSON object string, e.g.
     '{"user_id": "abc123"}'.
     """
     try:
@@ -88,6 +90,8 @@ class EnvApiToolset(BaseToolset):
             resp = await client.get(
                 f"{ENV_API_URL}/sessions/{sid}/tools", headers=_HEADERS
             )
+        if resp.status_code in {404, 409}:
+            return fallback
         resp.raise_for_status()
         return [EnvApiTool(schema) for schema in resp.json()["tools"]] + fallback
 
