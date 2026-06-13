@@ -8,7 +8,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-from cs_client_tool import ask_customer_service
+from cs_client_tool import call_customer_service
 from env_toolset import EnvApiToolset
 from model_client import chat_model
 
@@ -23,7 +23,7 @@ fees, limits, tool outputs, or identity details.
 
 Tools:
 - User-side environment tools are actions the user can perform directly.
-- ask_customer_service contacts Rho-Bank customer service over A2A with the
+- call_customer_service contacts Rho-Bank customer service over A2A with the
   same contextId. Use it for bank policy, bank-side state, verification,
   disputes, bank-side operations, or unclear action ownership.
 - call_env_tool is only a fallback for user-side tools in the user's current
@@ -40,6 +40,9 @@ Before asking customer service:
    is clear and all required fields are known.
 
 When asking customer service, keep the request compact:
+- Use the call_customer_service tool. Do not print, narrate, or show a tool
+  call to the user. Do not send CUSTOMER_INTENT / KNOWN_FACTS / REQUEST text as
+  a user-facing reply.
 
 CUSTOMER_INTENT:
 <what the user wants>
@@ -255,5 +258,5 @@ root_agent = LlmAgent(
         temperature=0.2,
     ),
     before_model_callback=fast_public_recommendations,
-    tools=[EnvApiToolset(), ask_customer_service],
+    tools=[EnvApiToolset(), call_customer_service],
 )
